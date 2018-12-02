@@ -11,6 +11,7 @@ import serial
 import simpleaudio
 import time
 import threading
+import yaml
 
 try:
     import readline
@@ -19,15 +20,40 @@ except:
 
 from functools import reduce
 
-# TODO Make it configurable
-PORT = 'COM7' #'/dev/ttyUSB0'
-PRECISION = 1
+CONFIG_NAME = os.path.join(os.path.expanduser('~'), '.config', 'pomolight')
+PRECISION = 5
+ASCII_ART = """
+       _______
+ ___  /  ___  \  ___
+\   | | /RRR\ | |   /
+ \  | | RRRRR | |  /
+  \_| | \RRR/ | |_/
+ ___  |  ___  |  ___
+\   | | /YYY\ | |   /
+ \  | | YYYYY | |  /
+  \_| | \YYY/ | |_/
+ ___  |  ___  |  ___
+\   | | /GGG\ | |   /
+ \  | | GGGGG | |  /
+  \_| | \GGG/ | |_/
+      \_______/
+         | |
+         | |
+         | |
+         | |
+         | |
+___\_____| |____\\___
+ ^    ^            ^
+""";
+
+config = None
 
 here = os.path.abspath(os.path.dirname(__file__))
 ding = simpleaudio.WaveObject.from_wave_file(os.path.join(here, "ding.wav"))
 
 is_running = True
 serial_port = None
+ascii_art = False
 actions = []
 timer = None
 
@@ -37,12 +63,38 @@ class TimerAction:
         self.target_datetime = target_datetime
         self.action = action
 
+
+TERM_COLOR = {
+    'W': lambda: print('\033[39m', end=''),
+    'R': lambda: print('\033[31m', end=''),
+    'Y': lambda: print('\033[33m', end=''),
+    'G': lambda: print('\033[32m', end=''),
+}
+
 def set_color(code):
-    while True:
-        serial_port.write(code.encode('ascii'))
-        result = serial_port.read(1)
-        if result.decode('ascii') == code: break
-        time.sleep(0.1)
+    if ascii_art:
+        current_color = 'W'
+        for char in ASCII_ART:
+            target_color = char if char in TERM_COLOR else 'W'
+            if current_color != target_color:
+                TERM_COLOR[target_color]()
+                current_color = target_color
+
+            if char == 'R':
+                char = 'O' if code & 4 else ' '
+            elif char == 'Y':
+                char = 'O' if code & 2 else ' '
+            elif char == 'G':
+                char = 'O' if code & 1 else ' '
+
+            print(char, end='')
+
+    if serial_port:
+        while True:
+            serial_port.write(str(code).encode('ascii'))
+            result = serial_port.read(1)
+            if result.decode('ascii') == code: break
+            time.sleep(0.1)
 
 def get_datetime(now, value):
     """Delta form: +1h +25m +120s +20 +1:30 +1:30:30
@@ -107,7 +159,7 @@ def main_loop():
     if command[0] == 'work' or command[0] == 'rest':
         actions.clear()
         work_timer = command[0] == 'work'
-        set_color('4' if work_timer else '1')
+        set_color(4 if work_timer else 1)
         if len(command) > 1:
             target_datetime = get_datetime(datetime.datetime.now(), command[1])
             actions.append(TimerAction(
@@ -115,10 +167,13 @@ def main_loop():
                 lambda: ding.play()))
             actions.append(TimerAction(
                 target_datetime,
-                lambda: set_color('6' if work_timer else '2')))
-            print('Switched to', 'work' if work_timer else 'rest', 'state until', target_datetime)
+                lambda: set_color(6 if work_timer else 2)))
+            actions.append(TimerAction(
+                target_datetime,
+                lambda: print('Timer for', command[0], 'activity is finished')))
+            print('Switched to', command[0], 'state until', target_datetime)
         else:
-            print('Switched to', 'work' if work_timer else 'rest', 'state')
+            print('Switched to', command[0], 'state')
 
     elif command[0] == 'reset':
         actions.clear()
@@ -138,18 +193,75 @@ def main_loop():
         print('<code> is bitmasked value for RYG leds.')
 
     elif command[0] == 'set':
-        set_color(command[1])
+        set_color(int(command[1]))
         print('Force set: ', command[1])
 
     elif command[0] == 'ding':
         ding.play()
 
 
+def parser_y_or_n(result):
+    if result in ['y', 'yes']: return True
+    if result in ['n', 'no']: return False
+    raise Exception('Input should be "y", "yes", "n" or "no"')
+
+def read_or_die(message, default=None, parser=None):
+    while True:
+        print(message + ': ', end='')
+        result = input()
+        try:
+            if not result.strip() and default is not None:
+                return default
+            return parser(result) if parser else result
+        except Exception as e:
+            print('Incorrect input: {}, lets try again...'.format(e))
+
+
+def load_config():
+    global config
+
+    try:
+        with open(CONFIG_NAME, 'r', encoding='utf-8') as stream:
+            config = yaml.load(stream)
+        return
+    except Exception:
+        pass
+
+    print('Configuration file was not found, lets try generate new one:')
+    config = dict()
+
+    if read_or_die('Do you want enable ASCII art [*yes*,no]', True, parser_y_or_n):
+        config['ascii'] = True
+
+    if read_or_die('Do you want enable COM adapter [yes,*no*]', False, parser_y_or_n):
+        config['com'] = {
+            'port': read_or_die('COM Port [*/dev/tty3*]', '/dev/tty3'),
+            'baud_rate': read_or_die('BaudRate [*9600*]', 9600, int),
+        }
+
+    os.makedirs(os.path.dirname(CONFIG_NAME), exist_ok=True)
+    with open(CONFIG_NAME, 'w', encoding='utf-8') as stream:
+        yaml.dump(config, stream)
+
+
 def main():
+    global ascii_art
     global serial_port
     global is_running
 
-    serial_port = serial.Serial(PORT, 9600, timeout=1)
+    load_config()
+
+    if 'ascii' in config:
+        ascii_art = True
+
+    if 'com' in config:
+        serial_port = serial.Serial(
+            config['com']['port'],
+            config['com']['baud_rate'],
+            timeout=1)
+
+    print('Pomolight is running...')
+
     timer = threading.Thread(target=timer_loop)
     timer.start()
 
@@ -163,7 +275,8 @@ def main():
             print(ex)
 
     timer.join()
-    serial_port.close()
+    if serial_port:
+        serial_port.close()
 
 if __name__ == '__main__':
     main()
