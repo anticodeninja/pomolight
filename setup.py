@@ -31,7 +31,7 @@ setup(
     license=license,
 
     packages=find_packages(),
-    install_requires = ['pyserial'],
+    install_requires = ['simpleaudio', 'pyserial', 'pyyaml', 'tornado'],
 
     entry_points={
         'console_scripts': [

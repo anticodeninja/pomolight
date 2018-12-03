@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Pomolight</title>
+    <script>
+     let socket;
+
+     function setText(selector, value) {
+       let block = document.querySelector(selector);
+       let valueSpan = block.querySelector('.value');
+       block.hidden = !value;
+       valueSpan.innerText = value;
+     }
+
+     function connect() {
+       socket = new WebSocket('ws://' + location.host + '/api');
+
+       socket.addEventListener('open', function (event) {
+         console.log('Connection established');
+       });
+
+       socket.addEventListener('message', function (event) {
+         console.log('Message from server ', event.data);
+
+         let data = JSON.parse(event.data);
+
+         let className = '';
+         if (data.current_code & 4) { className += 'red '; }
+         if (data.current_code & 2) { className += 'yellow '; }
+         if (data.current_code & 1) { className += 'green '; }
+         document.querySelector('#pomolight').classList.value = className;
+
+         setText('#activity', data.current_activity);
+         setText('#next_activity', data.next_activity_time);
+       });
+
+       socket.addEventListener('close', function (event) {
+         console.log('Connection closed');
+         setTimeout(connect, 5000);
+       });
+     }
+
+     connect();
+     setText('#activity', undefined);
+     setText('#next_activity', undefined);
+    </script>
+    <style type="text/css">
+     html { background: #fdf6e3; color: #002b36; font-family: "Lucida Grande", "Lucida Sans Unicode", Tahoma, Sans-Serif; }
+     body { position: absolute; left: 50%; top: 50%; width: 300px; margin: -300px 0 0 -150px; }
+     #pomolight { height: 600px; width: 300px; fill: #002b36; }
+     #pomolight #red, #pomolight #yellow, #pomolight #green { fill: #fdf6e3; }
+     #pomolight.red #red { fill: #dc322f; }
+     #pomolight.yellow #yellow { fill: #b58900; }
+     #pomolight.green #green { fill: #859900; }
+    </style>
+  </head>
+  <body>
+    <svg id="pomolight" class="red yellow green" version="1.1" width="580" height="960" viewBox="0 0 580 960">
+      <path d="M 340,0 q 80,0 80,80 v 440 q 0,80 -80,80 h -80 q -80,0 -80,-80 v -440 q 0,-80 80,-80 z"/>
+      <path d="M 440,40 h 120 q 20,0 20,20 c 0,20 -100,140 -120,140 q -20,0 -20,-20 z"/>
+      <path d="M 440,220 h 120 q 20,0 20,20 c 0,20 -100,140 -120,140 q -20,0 -20,-20 z"/>
+      <path d="M 440,400 h 120 q 20,0 20,20 c 0,20 -100,140 -120,140 q -20,0 -20,-20 z"/>
+      <path d="M 160,40 h -120 q -20,0 -20,20 c 0,20 100,140 120,140 q 20,0 20,-20 z"/>
+      <path d="M 160,220 h -120 q -20,0 -20,20 c 0,20 100,140 120,140 q 20,0 20,-20 z"/>
+      <path d="M 160,400 h -120 q -20,0 -20,20 c 0,20 100,140 120,140 q 20,0 20,-20 z"/>
+      <path d="M 340,620 q 20,0 20,20 v 300 q 0,20 -20,20 h -80 q -20,0 -20,-20 v -300 q 0,-20 20,-20 z"/>
+      <circle id="red" cx="300" cy="120" r="80"/>
+      <circle id="yellow" cx="300" cy="300" r="80"/>
+      <circle id="green" cx="300" cy="480" r="80"/>
+    </svg>
+    <p id="activity">Activity: <span class="value"></span></p>
+    <p id="next_activity">Next: <span class="value"></span></p>
+  </body>
+</html>

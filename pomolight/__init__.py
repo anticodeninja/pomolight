@@ -5,13 +5,19 @@
 # Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed
 # with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import asyncio
 import datetime
+import json
 import os
 import serial
 import simpleaudio
+import yaml
 import time
 import threading
-import yaml
+import tornado.ioloop
+import tornado.web
+import tornado.websocket
+import tornado.platform.asyncio
 
 try:
     import readline
@@ -45,25 +51,6 @@ ASCII_ART = """
 ___\_____| |____\\___
  ^    ^            ^
 """;
-
-config = None
-
-here = os.path.abspath(os.path.dirname(__file__))
-ding = simpleaudio.WaveObject.from_wave_file(os.path.join(here, "ding.wav"))
-
-is_running = True
-serial_port = None
-ascii_art = False
-actions = []
-timer = None
-
-class TimerAction:
-
-    def __init__(self, target_datetime, action):
-        self.target_datetime = target_datetime
-        self.action = action
-
-
 TERM_COLOR = {
     'W': lambda: print('\033[39m', end=''),
     'R': lambda: print('\033[31m', end=''),
@@ -71,7 +58,51 @@ TERM_COLOR = {
     'G': lambda: print('\033[32m', end=''),
 }
 
-def set_color(code):
+config = None
+
+here = os.path.abspath(os.path.dirname(__file__))
+ding = simpleaudio.WaveObject.from_wave_file(os.path.join(here, "ding.wav"))
+webpage_data = open(os.path.join(here, "pomolight.html"), 'r').read()
+
+is_closing = threading.Event()
+serial_port = None
+tornado_ioloop = None
+tornado_sockets = []
+ascii_art = False
+
+current_code = 0
+current_activity = None
+next_activity_time = None
+
+
+class MainHandler(tornado.web.RequestHandler):
+    def get(self):
+        self.write(webpage_data)
+
+
+class ApiHandler(tornado.websocket.WebSocketHandler):
+    def open(self):
+        tornado_sockets.append(self)
+        update_remote(self)
+
+    def on_close(self):
+        tornado_sockets.remove(self)
+
+
+def update(code=None, activity=None):
+    global current_code
+    global current_activity
+
+    if code:
+        current_code = code
+    if activity:
+        current_activity = activity
+
+    update_local()
+    update_remote()
+
+
+def update_local():
     if ascii_art:
         current_color = 'W'
         for char in ASCII_ART:
@@ -81,20 +112,40 @@ def set_color(code):
                 current_color = target_color
 
             if char == 'R':
-                char = 'O' if code & 4 else ' '
+                char = 'O' if current_code & 4 else ' '
             elif char == 'Y':
-                char = 'O' if code & 2 else ' '
+                char = 'O' if current_code & 2 else ' '
             elif char == 'G':
-                char = 'O' if code & 1 else ' '
+                char = 'O' if current_code & 1 else ' '
 
             print(char, end='')
 
     if serial_port:
         while True:
-            serial_port.write(str(code).encode('ascii'))
+            serial_port.write(str(current_code).encode('ascii'))
             result = serial_port.read(1)
-            if result.decode('ascii') == code: break
+            if int(result.decode('ascii')) == current_code: break
             time.sleep(0.1)
+
+
+def update_remote(socket=None):
+    sockets = [socket] if socket else tornado_sockets
+    if len(sockets) == 0:
+        return
+
+    next_activity_time_iso = None
+    if next_activity_time:
+        next_activity_time_iso = next_activity_time.isoformat()
+
+    info = json.dumps({
+        'current_code': current_code,
+        'current_activity': current_activity,
+        'next_activity_time': next_activity_time_iso,
+    })
+
+    for socket in sockets:
+        socket.write_message(info)
+
 
 def get_datetime(now, value):
     """Delta form: +1h +25m +120s +20 +1:30 +1:30:30
@@ -138,45 +189,63 @@ def get_datetime(now, value):
         return now
 
 def timer_loop():
-    global is_running
-    global actions
+    global next_activity_time
+    global next_activity_handler
 
-    while is_running:
+    while not is_closing.wait(PRECISION):
         try:
             now = datetime.datetime.now()
-            while len(actions) > 0 and now >= actions[0].target_datetime:
-                actions[0].action()
-                actions.pop(0)
+            if next_activity_time and now >= next_activity_time:
+                next_activity_time = None
+                next_activity_handler()
+                next_activity_handler = None
 
-        finally:
-            time.sleep(PRECISION)
+        except Exception:
+            pass
+
+
+def tornado_loop():
+    global tornado_ioloop
+
+    tornado_app = tornado.web.Application([
+        (r'/', MainHandler),
+        (r'/api', ApiHandler),
+    ])
+    tornado_app.listen(config['web']['port'])
+
+    tornado_ioloop = tornado.ioloop.IOLoop.current()
+    tornado_ioloop.start()
+
 
 def main_loop():
+    global next_activity_time
+    global next_activity_handler
+
     command = input()
     command = command.split(' ')
     command[0] = command[0].lower()
 
     if command[0] == 'work' or command[0] == 'rest':
-        actions.clear()
         work_timer = command[0] == 'work'
-        set_color(4 if work_timer else 1)
+
         if len(command) > 1:
-            target_datetime = get_datetime(datetime.datetime.now(), command[1])
-            actions.append(TimerAction(
-                target_datetime,
-                lambda: ding.play()))
-            actions.append(TimerAction(
-                target_datetime,
-                lambda: set_color(6 if work_timer else 2)))
-            actions.append(TimerAction(
-                target_datetime,
-                lambda: print('Timer for', command[0], 'activity is finished')))
-            print('Switched to', command[0], 'state until', target_datetime)
+            def __handler():
+                ding.play()
+                update(6 if work_timer else 2, 'almost rest' if work_timer else 'almost work')
+                print('Timer for', command[0], 'activity is finished')
+            next_activity_time = get_datetime(datetime.datetime.now(), command[1])
+            next_activity_handler = __handler
+            print('Switched to', command[0], 'state until', next_activity_time)
         else:
+            next_activity_time = None
+            next_activity_handler = None
             print('Switched to', command[0], 'state')
 
+        update(4 if work_timer else 1, command[0])
+
     elif command[0] == 'reset':
-        actions.clear()
+        next_activity_time = None
+        update()
         print('Reset current timer')
 
     elif command[0] == 'help':
@@ -193,7 +262,7 @@ def main_loop():
         print('<code> is bitmasked value for RYG leds.')
 
     elif command[0] == 'set':
-        set_color(int(command[1]))
+        update(int(command[1]), 'forced color')
         print('Force set: ', command[1])
 
     elif command[0] == 'ding':
@@ -239,6 +308,11 @@ def load_config():
             'baud_rate': read_or_die('BaudRate [*9600*]', 9600, int),
         }
 
+    if read_or_die('Do you want enable WEB adapter [yes,*no*]', False, parser_y_or_n):
+        config['web'] = {
+            'port': read_or_die('WEB Port [*13001*]', 13001, int),
+        }
+
     os.makedirs(os.path.dirname(CONFIG_NAME), exist_ok=True)
     with open(CONFIG_NAME, 'w', encoding='utf-8') as stream:
         yaml.dump(config, stream)
@@ -247,7 +321,7 @@ def load_config():
 def main():
     global ascii_art
     global serial_port
-    global is_running
+    global tornado_app
 
     load_config()
 
@@ -255,26 +329,37 @@ def main():
         ascii_art = True
 
     if 'com' in config:
-        serial_port = serial.Serial(
-            config['com']['port'],
-            config['com']['baud_rate'],
-            timeout=1)
+        try:
+            serial_port = serial.Serial(
+                config['com']['port'],
+                config['com']['baud_rate'],
+                timeout=1)
+        except:
+            print('Cannot initialize COM port, ignore COM adapter')
+
+    if 'web' in config:
+        asyncio.set_event_loop_policy(tornado.platform.asyncio.AnyThreadEventLoopPolicy())
+        tornado_thread = threading.Thread(target=tornado_loop)
+        tornado_thread.daemon = True
+        tornado_thread.start()
 
     print('Pomolight is running...')
 
-    timer = threading.Thread(target=timer_loop)
-    timer.start()
+    timer_thread = threading.Thread(target=timer_loop)
+    timer_thread.daemon = True
+    timer_thread.start()
 
-    while is_running:
+    while not is_closing.is_set():
         try:
             main_loop()
         except KeyboardInterrupt:
             print("\rQuiting...")
-            is_running = False
+            is_closing.set()
+            if tornado_ioloop:
+                tornado_ioloop.stop()
         except Exception as ex:
             print(ex)
 
-    timer.join()
     if serial_port:
         serial_port.close()
 
