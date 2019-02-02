@@ -3,48 +3,6 @@
   <head>
     <meta charset="utf-8">
     <title>Pomolight</title>
-    <script>
-     let socket;
-
-     function setText(selector, value) {
-       let block = document.querySelector(selector);
-       let valueSpan = block.querySelector('.value');
-       block.hidden = !value;
-       valueSpan.innerText = value;
-     }
-
-     function connect() {
-       socket = new WebSocket('ws://' + location.host + '/api');
-
-       socket.addEventListener('open', function (event) {
-         console.log('Connection established');
-       });
-
-       socket.addEventListener('message', function (event) {
-         console.log('Message from server ', event.data);
-
-         let data = JSON.parse(event.data);
-
-         let className = '';
-         if (data.current_code & 4) { className += 'red '; }
-         if (data.current_code & 2) { className += 'yellow '; }
-         if (data.current_code & 1) { className += 'green '; }
-         document.querySelector('#pomolight').classList.value = className;
-
-         setText('#activity', data.current_activity);
-         setText('#next_activity', data.next_activity_time);
-       });
-
-       socket.addEventListener('close', function (event) {
-         console.log('Connection closed');
-         setTimeout(connect, 5000);
-       });
-     }
-
-     connect();
-     setText('#activity', undefined);
-     setText('#next_activity', undefined);
-    </script>
     <style type="text/css">
      html { background: #fdf6e3; color: #002b36; font-family: "Lucida Grande", "Lucida Sans Unicode", Tahoma, Sans-Serif; }
      body { position: absolute; left: 50%; top: 50%; width: 300px; margin: -300px 0 0 -150px; }
@@ -70,6 +28,48 @@
       <circle id="green" cx="300" cy="480" r="80"/>
     </svg>
     <p id="activity">Activity: <span class="value"></span></p>
-    <p id="next_activity">Next: <span class="value"></span></p>
+    <p id="scheduled_time">Next: <span class="value"></span></p>
+    <script>
+     let socket;
+
+     function setText(selector, value) {
+       let block = document.querySelector(selector);
+       let valueSpan = block.querySelector('.value');
+       block.hidden = !value;
+       valueSpan.innerText = value;
+     }
+
+     function connect() {
+       socket = new WebSocket('ws://' + location.host + '/api');
+
+       socket.addEventListener('open', function (event) {
+         console.log('Connection established');
+       });
+
+       socket.addEventListener('message', function (event) {
+         console.log('Message from server ', event.data);
+
+         let data = JSON.parse(event.data);
+
+         let className = '';
+         if (data.code & 4) { className += 'red '; }
+         if (data.code & 2) { className += 'yellow '; }
+         if (data.code & 1) { className += 'green '; }
+         document.querySelector('#pomolight').classList.value = className;
+
+         setText('#activity', data.activity);
+         setText('#scheduled_time', data.scheduled_time);
+       });
+
+       socket.addEventListener('close', function (event) {
+         console.log('Connection closed');
+         setTimeout(connect, 5000);
+       });
+     }
+
+     connect();
+     setText('#activity', undefined);
+     setText('#scheduled_time', undefined);
+    </script>
   </body>
 </html>
