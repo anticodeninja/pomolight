@@ -95,3 +95,14 @@ def get_datetime(now, value):
             now = now + datetime.timedelta(hours=(24 if value[0] < now.hour else 0) + value[0] - now.hour)
 
         return now
+
+def parse_state_command(command):
+    print(command)
+    args = command.split(' ')
+    is_work = args[0] == 'work'
+    return dict(
+        code=4 if is_work else 1,
+        activity=args[0],
+        scheduled_time=get_datetime(datetime.datetime.now(), args[1]) if len(args) > 1 else None,
+        scheduled_code=6 if is_work else 2,
+        scheduled_activity='almost rest' if is_work else 'almost work')

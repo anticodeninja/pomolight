@@ -25,9 +25,10 @@ class Module(PomoModule):
         return CLI_WORKER
 
     def state_changed(self):
-        if self.silent:
-            return
-        print('Switched to', self.core.state.activity, 'state')
+        if self.core.state.scheduled_time:
+            print('Switched to', self.core.state.activity, 'state until', self.core.state.scheduled_time)
+        else:
+            print('Switched to', self.core.state.activity, 'state')
 
     def start(self, blocked):
         if blocked:
@@ -52,33 +53,16 @@ class Module(PomoModule):
 
     def interact(self):
         command = input()
-        command = command.split(' ')
-        command[0] = command[0].lower()
+        args = command.split(' ')
+        args[0] = args[0].lower()
 
-        if command[0] == 'work' or command[0] == 'rest':
-            work_timer = command[0] == 'work'
+        if args[0] == 'work' or args[0] == 'rest':
+            self.core.update(**parse_state_command(command))
 
-            code=4 if work_timer else 1
-            activity=command[0]
+        elif args[0] == 'reset':
+            self.core.update(scheduled_time=None)
 
-            if len(command) > 1:
-                scheduled_time = get_datetime(datetime.datetime.now(), command[1])
-                self.update(
-                    code=code,
-                    activity=command[0],
-                    scheduled_time=scheduled_time,
-                    scheduled_code=6 if work_timer else 2,
-                    scheduled_activity='almost rest' if work_timer else 'almost work')
-                print('Switched to', command[0], 'state until', scheduled_time)
-            else:
-                self.update(code=code, activity=command[0], scheduled_time=None)
-                print('Switched to', command[0], 'state')
-
-        elif command[0] == 'reset':
-            self.update(scheduled_time=None)
-            print('Reset current timer')
-
-        elif command[0] == 'help':
+        elif args[0] == 'help':
             print('work [<time>] - set work state (with timer)')
             print('rest [<time>] - set rest state (with timer)')
             print('reset - reset current timer')
@@ -91,17 +75,11 @@ class Module(PomoModule):
             print('When <time> is not set traflight will be switcher, but timer will not be set.')
             print('<code> is bitmasked value for RYG leds.')
 
-        elif command[0] == 'set':
-            self.update(
-                code=int(command[1]),
+        elif args[0] == 'set':
+            self.core.update(
+                code=int(args[1]),
                 activity='forced color',
                 scheduled_time=None)
-            print('Force set: ', command[1])
 
-        elif command[0] == 'ding':
-            self.update()
-
-    def update(self, **kwargs):
-        self.silent = True
-        self.core.update(**kwargs)
-        self.silent = False
+        elif args[0] == 'ding':
+            self.core.update()

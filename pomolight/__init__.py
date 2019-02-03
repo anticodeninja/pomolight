@@ -71,6 +71,15 @@ class Pomolight:
         if read_or_die('Do you want enable ASCII art [*yes*,no]', True, parser_y_or_n):
             self.config['ascii'] = {}
 
+        if read_or_die('Do you want enable trayicon [*yes*,no]', True, parser_y_or_n):
+            deps.append('pystray')
+            self.config['tray'] = {
+                'commands': [
+                    read_or_die('Command for "work" [work +25m]', 'work +25m'),
+                    read_or_die('Command for "rest" [rest +5m]', 'rest +5m'),
+                ]
+            }
+
         if read_or_die('Do you want enable COM adapter [yes,*no*]', False, parser_y_or_n):
             deps.append('pyserial')
             self.config['comadapter'] = {
